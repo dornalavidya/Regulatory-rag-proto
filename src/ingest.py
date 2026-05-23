@@ -1,14 +1,12 @@
-from sentence_transformers import SentenceTransformer
 import pdfplumber, uuid, os, json, numpy as np
-MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+import pickle
+from sklearn.feature_extraction.text import TfidfVectorizer
 INDEX_PATH = "index.npy"
 META_PATH = "index_meta.json"
+VECT_PATH = "vectorizer.pkl"
 DOC_STORE = "docs/"
 
-def ingest_document(uploaded_file):
-    os.makedirs(DOC_STORE, exist_ok=True)
-    doc_id = str(uuid.uuid4())
-    path = os.path.join(DOC_STORE, f"{doc_id}.txt")
+def _read_file_text(path, uploaded_file):
     if uploaded_file.type == "application/pdf" or uploaded_file.name.endswith(".pdf"):
         with pdfplumber.open(uploaded_file) as pdf, open(path,"w",encoding="utf-8") as out:
             for p in pdf.pages:
@@ -17,20 +15,38 @@ def ingest_document(uploaded_file):
     else:
         text = uploaded_file.getvalue().decode("utf-8")
         open(path,"w",encoding="utf-8").write(text)
+
+
+def ingest_document(uploaded_file):
+    os.makedirs(DOC_STORE, exist_ok=True)
+    doc_id = str(uuid.uuid4())
+    path = os.path.join(DOC_STORE, f"{doc_id}.txt")
+    _read_file_text(path, uploaded_file)
     texts = [t for t in open(path,"r",encoding="utf-8").read().split("\n\n") if t.strip()]
-    embeddings = MODEL.encode(texts)
-    if os.path.exists(INDEX_PATH) and os.path.exists(META_PATH):
-        existing = np.load(INDEX_PATH)
-        meta = json.load(open(META_PATH,encoding="utf-8"))
-        all_embeddings = np.vstack([existing, embeddings])
-        meta.extend([{"doc_id": doc_id, "chunk": t} for t in texts])
+
+    # If there is an existing index, load previous chunks to refit vectorizer
+    if os.path.exists(META_PATH):
+        meta = json.load(open(META_PATH, encoding="utf-8"))
+        existing_chunks = [m.get("chunk") for m in meta]
     else:
-        all_embeddings = embeddings
-        meta = [{"doc_id": doc_id, "chunk": t} for t in texts]
-    np.save(INDEX_PATH, all_embeddings)
-    with open(META_PATH,"w",encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
+        meta = []
+        existing_chunks = []
+
+    all_chunks = existing_chunks + texts
+    vectorizer = TfidfVectorizer()
+    embeddings = vectorizer.fit_transform(all_chunks).toarray()
+
+    # Save embeddings and metadata (keep ordering: existing then new)
+    np.save(INDEX_PATH, embeddings)
+    new_meta = meta + [{"doc_id": doc_id, "chunk": t} for t in texts]
+    with open(META_PATH, "w", encoding="utf-8") as f:
+        json.dump(new_meta, f, ensure_ascii=False)
+
+    # Save vectorizer
+    with open(VECT_PATH, "wb") as f:
+        pickle.dump(vectorizer, f)
+
     meta_doc = {"doc_id": doc_id, "path": path, "chunks": texts}
-    with open(os.path.join(DOC_STORE,f"{doc_id}.json"),"w",encoding="utf-8") as f:
-        json.dump(meta_doc,f, ensure_ascii=False)
+    with open(os.path.join(DOC_STORE, f"{doc_id}.json"), "w", encoding="utf-8") as f:
+        json.dump(meta_doc, f, ensure_ascii=False)
     return doc_id
