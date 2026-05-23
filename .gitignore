@@ -1,0 +1,6 @@
+pycache/
+docs/
+*.pyc
+.env
+index.npy
+index_meta.json
