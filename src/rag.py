@@ -1,18 +1,20 @@
-import os, json
-from sentence_transformers import SentenceTransformer
+import os, json, pickle
 import numpy as np, openai
 from sklearn.neighbors import NearestNeighbors
-MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+from sklearn.metrics.pairwise import cosine_distances
 INDEX_PATH = "index.npy"
 META_PATH = "index_meta.json"
+VECT_PATH = "vectorizer.pkl"
 openai.api_key = os.getenv("OPENAI_API_KEY","")
 
 def _retrieve(query, k=4):
-    if not os.path.exists(INDEX_PATH) or not os.path.exists(META_PATH):
+    if not os.path.exists(INDEX_PATH) or not os.path.exists(META_PATH) or not os.path.exists(VECT_PATH):
         return []
     embeddings = np.load(INDEX_PATH)
     meta = json.load(open(META_PATH,encoding="utf-8"))
-    q_emb = MODEL.encode([query])
+    with open(VECT_PATH, "rb") as f:
+        vectorizer = pickle.load(f)
+    q_emb = vectorizer.transform([query]).toarray()
     nn = NearestNeighbors(n_neighbors=min(k, len(embeddings)), metric='cosine').fit(embeddings)
     distances, indices = nn.kneighbors(q_emb)
     snippets = []
